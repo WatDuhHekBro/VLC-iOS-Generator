@@ -1,27 +1,29 @@
+use dotenvy::dotenv;
 use md5::{Digest, Md5};
+use std::env;
 use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
 
-// Step #1: Copy the file and rename it ("file:///.../song.mp3" --> "~/local/tmp/12.mp3")
-// Step #2: Replace the entry with the index ("../Genre/song.mp3")
-
 // Actually, forget using indexes, especially with multiple playlists. Use file hashes instead, no need to keep a database in memory.
 // Step #1: Copy all target genres into "~/local/tmp/vlc-ios/<genre>/<hash>.mp3"
 // Step #2: For all playlists in "<music-root>/[Playlists]/<playlist>.m3u8", replace file entries with "../<genre>/<hash>.mp3".
 
-// For the program to work, you MUST add trailing slashes for MUSIC_ROOT!
-const MUSIC_ROOT: &'static str = "/home/watduhhekbro/local/music/";
-const TMP_ROOT: &'static str = "/home/watduhhekbro/local/tmp/vlc-ios";
-const PLAYLISTS_FOLDER: &'static str = "[Playlists]";
-// I just realized that you don't need to do this unless necessary.
-//const GENRES: [&str; 1] = ["Slow"];
-const GENRES: [&str; 0] = [];
-//const GENRES: [&str; 1] = ["unsorted-part2/slow"];
-
 fn main() {
+    // Command line arguments
+    let args: Vec<String> = env::args().collect();
+    let genres = &args[1..];
+
+    // Load .env
+    dotenv().ok();
+
+    // Make sure all variables exist
+    let env_music_root = env::var("MUSIC_ROOT").expect("No MUSIC_ROOT defined!");
+    let env_tmp_root = env::var("TMP_ROOT").expect("No TMP_ROOT defined!");
+    let env_playlists_folder = env::var("PLAYLISTS_FOLDER").unwrap_or(String::from("[Playlists]"));
+
     // Setup MD5 hash cache <"/home/...", "1234567890abcdef">
     let mut cache: HashMap<String, String> = HashMap::new();
     /*cache.insert(
@@ -30,9 +32,9 @@ fn main() {
     );*/
 
     // Loop through all genre folders, copying and renaming into MD5 hashes
-    for genre in GENRES {
-        let src_path = Path::new(MUSIC_ROOT).join(genre);
-        let out_path = Path::new(TMP_ROOT).join(genre);
+    for genre in genres {
+        let src_path = Path::new(&env_music_root).join(genre);
+        let out_path = Path::new(&env_tmp_root).join(genre);
         fs::create_dir_all(out_path.clone()).ok();
 
         // Copy each file in the src path to the out path, also renaming
@@ -65,8 +67,8 @@ fn main() {
     }
 
     // Loop through all the playlist files, generating transformed versions in the temporary root.
-    let playlists_path = Path::new(MUSIC_ROOT).join(PLAYLISTS_FOLDER);
-    let playlists_path_output = Path::new(TMP_ROOT).join(PLAYLISTS_FOLDER);
+    let playlists_path = Path::new(&env_music_root).join(&env_playlists_folder);
+    let playlists_path_output = Path::new(&env_tmp_root).join(&env_playlists_folder);
     fs::create_dir_all(&playlists_path_output).ok();
 
     for entry in fs::read_dir(playlists_path).expect("Playlists folder doesn't exist!") {
@@ -81,15 +83,22 @@ fn main() {
                 continue;
             }
 
-            let new_playlist_file =
-                generate_transformed_playlist(&path.display().to_string(), &mut cache);
+            let new_playlist_file = generate_transformed_playlist(
+                &path.display().to_string(),
+                &env_music_root,
+                &mut cache,
+            );
             let new_playlist_path = playlists_path_output.join(filename);
             fs::write(new_playlist_path, new_playlist_file).ok();
         }
     }
 }
 
-fn generate_transformed_playlist(path: &String, cache: &mut HashMap<String, String>) -> String {
+fn generate_transformed_playlist(
+    path: &String,
+    env_music_root: &String,
+    cache: &mut HashMap<String, String>,
+) -> String {
     let file = fs::read_to_string(path).expect(&format!("Invalid path: \"{path}\"!"));
     let mut output = String::new();
 
@@ -102,7 +111,7 @@ fn generate_transformed_playlist(path: &String, cache: &mut HashMap<String, Stri
         // If the line is a path (assumed), then change the file reference to an MD5 hash
         else {
             let filename = &decode_uri_component(&line.to_string()).replace("file://", ""); // /home/watduhhekbro/local/music/genre/C AllStar - lau haa.mp3
-            let relative_filename = &filename.replace(MUSIC_ROOT, ""); // genre/C AllStar - lau haa.mp3
+            let relative_filename = &filename.replace(env_music_root, ""); // genre/C AllStar - lau haa.mp3
             let relative_parent = {
                 let relative_parent = Path::new(relative_filename).parent();
 
