@@ -1,5 +1,6 @@
 use md5::{Digest, Md5};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -16,10 +17,53 @@ const MUSIC_ROOT: &'static str = "/home/watduhhekbro/local/music/";
 const TMP_ROOT: &'static str = "/home/watduhhekbro/local/tmp/vlc-ios";
 const PLAYLISTS_FOLDER: &'static str = "[Playlists]";
 // I just realized that you don't need to do this unless necessary.
+//const GENRES: [&str; 1] = ["Slow"];
 const GENRES: [&str; 0] = [];
 //const GENRES: [&str; 1] = ["unsorted-part2/slow"];
 
 fn main() {
+    // Setup MD5 hash cache <"/home/...", "1234567890abcdef">
+    let mut cache: HashMap<String, String> = HashMap::new();
+    /*cache.insert(
+        "/home/watduhhekbro/local/music/Slow/엠씨더맥스 (M.C the MAX) - 넘쳐흘러.mp3".into(),
+        "test-hash".into(),
+    );*/
+
+    // Loop through all genre folders, copying and renaming into MD5 hashes
+    for genre in GENRES {
+        let src_path = Path::new(MUSIC_ROOT).join(genre);
+        let out_path = Path::new(TMP_ROOT).join(genre);
+        fs::create_dir_all(out_path.clone()).ok();
+
+        // Copy each file in the src path to the out path, also renaming
+        for entry in fs::read_dir(&src_path)
+            .expect(&format!("Unknown genre path: \"{}\"!", src_path.display()))
+        {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let path = path.as_path();
+            let path_as_str = path.display().to_string();
+
+            if path.is_dir() {
+                continue;
+            }
+
+            let stored_hash = cache.get(&path_as_str);
+
+            if let Some(stored_hash) = stored_hash {
+                fs::copy(path, out_path.join(format!("{stored_hash}.mp3"))).ok();
+            } else {
+                let hash = get_md5_of_file(&path_as_str);
+                let filename = format!("{hash}.mp3");
+
+                // Update the cache for future iterations
+                cache.insert(path_as_str, hash);
+
+                fs::copy(path, out_path.join(filename)).ok();
+            }
+        }
+    }
+
     // Loop through all the playlist files, generating transformed versions in the temporary root.
     let playlists_path = Path::new(MUSIC_ROOT).join(PLAYLISTS_FOLDER);
     let playlists_path_output = Path::new(TMP_ROOT).join(PLAYLISTS_FOLDER);
@@ -37,37 +81,15 @@ fn main() {
                 continue;
             }
 
-            let new_playlist_file = generate_transformed_playlist(&path.display().to_string());
+            let new_playlist_file =
+                generate_transformed_playlist(&path.display().to_string(), &mut cache);
             let new_playlist_path = playlists_path_output.join(filename);
             fs::write(new_playlist_path, new_playlist_file).ok();
         }
     }
-
-    // Loop through all genre folders, copying and renaming into MD5 hashes
-    for genre in GENRES {
-        let src_path = Path::new(MUSIC_ROOT).join(genre);
-        let out_path = Path::new(TMP_ROOT).join(genre);
-        fs::create_dir_all(out_path.clone()).ok();
-
-        // Copy each file in the src path to the out path, also renaming
-        for entry in fs::read_dir(&src_path)
-            .expect(&format!("Unknown genre path: \"{}\"!", src_path.display()))
-        {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            let path = path.as_path();
-            let hash = get_md5_of_file(&path.display().to_string());
-
-            if path.is_dir() {
-                continue;
-            }
-
-            fs::copy(path, out_path.join(format!("{hash}.mp3"))).ok();
-        }
-    }
 }
 
-fn generate_transformed_playlist(path: &String) -> String {
+fn generate_transformed_playlist(path: &String, cache: &mut HashMap<String, String>) -> String {
     let file = fs::read_to_string(path).expect(&format!("Invalid path: \"{path}\"!"));
     let mut output = String::new();
 
@@ -91,9 +113,24 @@ fn generate_transformed_playlist(path: &String) -> String {
                 }
             }; // genre
 
+            // First check if the filename associated already has its hash calculated
+            let stored_hash = cache.get(filename);
+
+            let new_filename = if let Some(stored_hash) = stored_hash {
+                format!("{stored_hash}.mp3")
+            } else {
+                let hash = get_md5_of_file(filename);
+                let output = format!("{hash}.mp3");
+
+                // Make sure to add the result to the cache
+                cache.insert(filename.clone(), hash);
+
+                output
+            };
+
             let mut new_path = PathBuf::from("..");
             new_path.push(relative_parent);
-            new_path.push(format!("{}.mp3", get_md5_of_file(filename)));
+            new_path.push(new_filename);
 
             output.push_str(&new_path.display().to_string());
             output.push('\n');
